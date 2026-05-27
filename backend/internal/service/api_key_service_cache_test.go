@@ -211,6 +211,9 @@ func TestAPIKeyService_GetByKey_UsesL2Cache(t *testing.T) {
 				ModelRouting: map[string][]int64{
 					"claude-opus-*": {1, 2},
 				},
+				ModelMapping: map[string]string{
+					"gpt-5": "gpt-5.4",
+				},
 			},
 		},
 	}
@@ -225,6 +228,7 @@ func TestAPIKeyService_GetByKey_UsesL2Cache(t *testing.T) {
 	require.Equal(t, groupID, apiKey.Group.ID)
 	require.True(t, apiKey.Group.ModelRoutingEnabled)
 	require.Equal(t, map[string][]int64{"claude-opus-*": {1, 2}}, apiKey.Group.ModelRouting)
+	require.Equal(t, map[string]string{"gpt-5": "gpt-5.4"}, apiKey.Group.ModelMapping)
 }
 
 func TestAPIKeyService_SnapshotRoundTrip_PreservesMessagesDispatchModelConfig(t *testing.T) {
@@ -253,6 +257,9 @@ func TestAPIKeyService_SnapshotRoundTrip_PreservesMessagesDispatchModelConfig(t 
 			RateMultiplier:        1,
 			AllowMessagesDispatch: true,
 			DefaultMappedModel:    "gpt-5.4",
+			ModelMapping: map[string]string{
+				"gpt-5": "gpt-5.4",
+			},
 			MessagesDispatchModelConfig: OpenAIMessagesDispatchModelConfig{
 				OpusMappedModel:   "gpt-5.4-nano",
 				SonnetMappedModel: "gpt-5.3-codex",
@@ -270,6 +277,7 @@ func TestAPIKeyService_SnapshotRoundTrip_PreservesMessagesDispatchModelConfig(t 
 	require.NotNil(t, roundTrip)
 	require.Equal(t, apiKey.Name, roundTrip.Name)
 	require.NotNil(t, roundTrip.Group)
+	require.Equal(t, apiKey.Group.ModelMapping, roundTrip.Group.ModelMapping)
 	require.Equal(t, apiKey.Group.MessagesDispatchModelConfig, roundTrip.Group.MessagesDispatchModelConfig)
 }
 

@@ -1,13 +1,73 @@
 package service
 
 import (
+	"fmt"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 )
+
+// groupMappingRegexCache 缓存分组模型映射中已编译的正则表达式（自动添加全串锚定）。
+// key: 去掉 "~" 前缀后的原始正则字符串，value: 编译后的 *regexp.Regexp。
+var groupMappingRegexCache sync.Map
+
+// getGroupMappingRegex 返回对应 rawPattern 的编译正则，自动添加 ^(?:...)$ 全串锚定。
+// 编译结果在进程生命周期内缓存，避免热路径重复 Compile。
+func getGroupMappingRegex(rawPattern string) (*regexp.Regexp, error) {
+	anchored := `^(?:` + rawPattern + `)$`
+	if v, ok := groupMappingRegexCache.Load(anchored); ok {
+		return v.(*regexp.Regexp), nil
+	}
+	re, err := regexp.Compile(anchored)
+	if err != nil {
+		return nil, err
+	}
+	actual, _ := groupMappingRegexCache.LoadOrStore(anchored, re)
+	return actual.(*regexp.Regexp), nil
+}
+
+func NormalizeGroupModelMapping(mapping map[string]string) (map[string]string, error) {
+	if mapping == nil {
+		return nil, nil
+	}
+	normalized := make(map[string]string, len(mapping))
+	for source, target := range mapping {
+		source = strings.TrimSpace(source)
+		target = strings.TrimSpace(target)
+		if source == "" {
+			return nil, fmt.Errorf("model_mapping source cannot be empty")
+		}
+		if target == "" {
+			return nil, fmt.Errorf("model_mapping target for %q cannot be empty", source)
+		}
+		if strings.Contains(target, "*") {
+			return nil, fmt.Errorf("model_mapping target for %q cannot contain wildcard", source)
+		}
+		if strings.HasPrefix(source, "~") {
+			rawPattern := strings.TrimSpace(strings.TrimPrefix(source, "~"))
+			if rawPattern == "" {
+				return nil, fmt.Errorf("model_mapping regex source cannot be empty")
+			}
+			if _, err := getGroupMappingRegex(rawPattern); err != nil {
+				return nil, fmt.Errorf("invalid model_mapping regex %q: %w", source, err)
+			}
+			source = "~" + rawPattern
+		} else if count := strings.Count(source, "*"); count > 0 {
+			if count > 1 || !strings.HasSuffix(source, "*") {
+				return nil, fmt.Errorf("model_mapping wildcard source %q must use a single trailing *", source)
+			}
+		}
+		if _, exists := normalized[source]; exists {
+			return nil, fmt.Errorf("duplicate model_mapping source %q", source)
+		}
+		normalized[source] = target
+	}
+	return normalized, nil
+}
 
 type OpenAIMessagesDispatchModelConfig = domain.OpenAIMessagesDispatchModelConfig
 
@@ -182,12 +242,14 @@ func matchModelPattern(pattern, model string) bool {
 // ResolveGroupMappedModel 查找分组级别的模型映射。
 // matched=true 表示命中规则（即使映射结果与原模型名相同）。
 // 匹配优先级：精确 > 正则（~ 前缀）> 通配符（* 后缀），同级按 pattern 长度降序取最长匹配。
+// 目标值为空字符串的规则视为未配置，不会命中（避免产生误导性的 "model is required" 错误）。
+// 正则匹配自动添加全串锚定（^(?:...)$），防止子串误匹配，并在进程级缓存编译结果。
 func (g *Group) ResolveGroupMappedModel(requestedModel string) (mappedModel string, matched bool) {
 	if g == nil || len(g.ModelMapping) == 0 || requestedModel == "" {
 		return requestedModel, false
 	}
-	// 1. 精确匹配
-	if target, ok := g.ModelMapping[requestedModel]; ok {
+	// 1. 精确匹配（Bug4: 跳过空目标）
+	if target, ok := g.ModelMapping[requestedModel]; ok && target != "" {
 		return target, true
 	}
 	// 2. 正则匹配（pattern 以 "~" 开头）
@@ -197,6 +259,9 @@ func (g *Group) ResolveGroupMappedModel(requestedModel string) (mappedModel stri
 	}
 	var regexCandidates, wildcardCandidates []candidate
 	for pattern, target := range g.ModelMapping {
+		if target == "" {
+			continue // Bug4: 跳过空目标，不加入候选
+		}
 		if strings.HasPrefix(pattern, "~") {
 			regexCandidates = append(regexCandidates, candidate{pattern, target})
 		} else if strings.HasSuffix(pattern, "*") {
@@ -208,7 +273,8 @@ func (g *Group) ResolveGroupMappedModel(requestedModel string) (mappedModel stri
 		return len(regexCandidates[i].pattern) > len(regexCandidates[j].pattern)
 	})
 	for _, c := range regexCandidates {
-		re, err := regexp.Compile(c.pattern[1:]) // 去掉 "~" 前缀
+		// Bug2+3: 使用进程级缓存的全串锚定正则（^(?:...)$），避免子串误匹配和重复编译
+		re, err := getGroupMappingRegex(c.pattern[1:])
 		if err != nil {
 			continue
 		}
@@ -228,4 +294,5 @@ func (g *Group) ResolveGroupMappedModel(requestedModel string) (mappedModel stri
 	}
 	return requestedModel, false
 }
+
 // xiugai end

@@ -1641,6 +1641,10 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 	if input.MCPXMLInject != nil {
 		mcpXMLInject = *input.MCPXMLInject
 	}
+	modelMapping, err := NormalizeGroupModelMapping(input.ModelMapping)
+	if err != nil {
+		return nil, err
+	}
 
 	// 如果指定了复制账号的源分组，先获取账号 ID 列表
 	var accountIDsToCopy []int64
@@ -1704,7 +1708,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		MessagesDispatchModelConfig:     normalizeOpenAIMessagesDispatchModelConfig(input.MessagesDispatchModelConfig),
 		RPMLimit:                        input.RPMLimit,
 		// xiugai 修改自动映射功能
-		ModelMapping: input.ModelMapping,
+		ModelMapping: modelMapping,
 		// xiugai end
 	}
 	sanitizeGroupMessagesDispatchFields(group)
@@ -1957,7 +1961,11 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	}
 	// xiugai 修改自动映射功能
 	if input.ModelMapping != nil {
-		group.ModelMapping = input.ModelMapping
+		modelMapping, err := NormalizeGroupModelMapping(input.ModelMapping)
+		if err != nil {
+			return nil, err
+		}
+		group.ModelMapping = modelMapping
 	}
 	// xiugai end
 	sanitizeGroupMessagesDispatchFields(group)

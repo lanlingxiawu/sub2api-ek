@@ -159,12 +159,14 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		return
 	}
 	reqModel := parsedReq.Model
+	clientReqModel := reqModel
 	reqStream := parsedReq.Stream
 
 	// xiugai 修改自动映射功能
 	// 应用分组级模型映射（优先于渠道级，透明重写请求模型名）
 	if mapped, ok := apiKey.Group.ResolveGroupMappedModel(reqModel); ok {
 		body = service.ReplaceModelInBody(body, mapped)
+		parsedReq.Body = body // 更新解析后的请求体，确保后续处理使用映射后的模型名
 		parsedReq.Model = mapped
 		reqModel = mapped
 	}
@@ -533,7 +535,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					RequestPayloadHash: requestPayloadHash,
 					ForceCacheBilling:  fs.ForceCacheBilling,
 					APIKeyService:      h.apiKeyService,
-					ChannelUsageFields: channelMapping.ToUsageFields(reqModel, result.UpstreamModel),
+					ChannelUsageFields: channelMapping.ToUsageFieldsFromClient(clientReqModel, reqModel, result.UpstreamModel),
 				}); err != nil {
 					logger.L().With(
 						zap.String("component", "handler.gateway.messages"),
@@ -926,7 +928,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					RequestPayloadHash: requestPayloadHash,
 					ForceCacheBilling:  fs.ForceCacheBilling,
 					APIKeyService:      h.apiKeyService,
-					ChannelUsageFields: channelMapping.ToUsageFields(reqModel, result.UpstreamModel),
+					ChannelUsageFields: channelMapping.ToUsageFieldsFromClient(clientReqModel, reqModel, result.UpstreamModel),
 				}); err != nil {
 					logger.L().With(
 						zap.String("component", "handler.gateway.messages"),

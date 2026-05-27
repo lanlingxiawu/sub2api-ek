@@ -444,28 +444,23 @@ func stringMappingFromRaw(raw any) map[string]string {
 }
 
 func (a *Account) GetModelMapping() map[string]string {
-	credentialsPtr := mapPtr(a.Credentials)
-	rawMapping, _ := a.Credentials["model_mapping"].(map[string]any)
-	rawPtr := mapPtr(rawMapping)
-	rawLen := len(rawMapping)
-	rawSig := uint64(0)
-	rawSigReady := false
+	credentialsPtr := mapPointer(a.Credentials)
+	var rawMapping any
+	if a.Credentials != nil {
+		rawMapping = a.Credentials["model_mapping"]
+	}
+	rawPtr, rawLen, rawSig := modelMappingRawState(rawMapping)
 
 	if a.modelMappingCacheReady &&
 		a.modelMappingCacheCredentialsPtr == credentialsPtr &&
 		a.modelMappingCacheRawPtr == rawPtr &&
 		a.modelMappingCacheRawLen == rawLen {
-		rawSig = modelMappingSignature(rawMapping)
-		rawSigReady = true
 		if a.modelMappingCacheRawSig == rawSig {
 			return a.modelMappingCache
 		}
 	}
 
-	mapping := a.resolveModelMapping(rawMapping)
-	if !rawSigReady {
-		rawSig = modelMappingSignature(rawMapping)
-	}
+	mapping := a.resolveModelMapping(stringMappingFromRaw(rawMapping))
 
 	a.modelMappingCache = mapping
 	a.modelMappingCacheReady = true
@@ -476,7 +471,7 @@ func (a *Account) GetModelMapping() map[string]string {
 	return mapping
 }
 
-func (a *Account) resolveModelMapping(rawMapping map[string]any) map[string]string {
+func (a *Account) resolveModelMapping(rawMapping map[string]string) map[string]string {
 	if a.Credentials == nil {
 		// Antigravity 平台使用默认映射
 		if a.Platform == domain.PlatformAntigravity {
@@ -495,8 +490,8 @@ func (a *Account) resolveModelMapping(rawMapping map[string]any) map[string]stri
 
 	result := make(map[string]string)
 	for k, v := range rawMapping {
-		if s, ok := v.(string); ok {
-			result[k] = s
+		if v != "" {
+			result[k] = v
 		}
 	}
 	if len(result) > 0 {
@@ -517,14 +512,29 @@ func (a *Account) resolveModelMapping(rawMapping map[string]any) map[string]stri
 	return nil
 }
 
-func mapPtr(m map[string]any) uintptr {
-	if m == nil {
+func mapPointer(raw any) uintptr {
+	if raw == nil {
 		return 0
 	}
-	return reflect.ValueOf(m).Pointer()
+	v := reflect.ValueOf(raw)
+	if v.Kind() != reflect.Map || v.IsNil() {
+		return 0
+	}
+	return v.Pointer()
 }
 
-func modelMappingSignature(rawMapping map[string]any) uint64 {
+func modelMappingRawState(raw any) (uintptr, int, uint64) {
+	switch mapping := raw.(type) {
+	case map[string]any:
+		return mapPointer(mapping), len(mapping), modelMappingAnySignature(mapping)
+	case map[string]string:
+		return mapPointer(mapping), len(mapping), modelMappingStringSignature(mapping)
+	default:
+		return 0, 0, 0
+	}
+}
+
+func modelMappingAnySignature(rawMapping map[string]any) uint64 {
 	if len(rawMapping) == 0 {
 		return 0
 	}
@@ -543,6 +553,26 @@ func modelMappingSignature(rawMapping map[string]any) uint64 {
 		} else {
 			_, _ = h.Write([]byte{1})
 		}
+		_, _ = h.Write([]byte{0xff})
+	}
+	return h.Sum64()
+}
+
+func modelMappingStringSignature(rawMapping map[string]string) uint64 {
+	if len(rawMapping) == 0 {
+		return 0
+	}
+	keys := make([]string, 0, len(rawMapping))
+	for k := range rawMapping {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	h := fnv.New64a()
+	for _, k := range keys {
+		_, _ = h.Write([]byte(k))
+		_, _ = h.Write([]byte{0})
+		_, _ = h.Write([]byte(rawMapping[k]))
 		_, _ = h.Write([]byte{0xff})
 	}
 	return h.Sum64()
@@ -602,7 +632,7 @@ func resolveRequestedModelInMapping(mapping map[string]string, requestedModel st
 	if requestedModel == "" {
 		return "", false
 	}
-	if mappedModel, exists := mapping[requestedModel]; exists {
+	if mappedModel, exists := mapping[requestedModel]; exists && mappedModel != "" {
 		return mappedModel, true
 	}
 	return matchWildcardMappingResult(mapping, requestedModel)
@@ -802,6 +832,9 @@ func matchWildcardMappingResult(mapping map[string]string, requestedModel string
 	var matches []patternMatch
 
 	for pattern, target := range mapping {
+		if target == "" {
+			continue
+		}
 		if matchWildcard(pattern, requestedModel) {
 			matches = append(matches, patternMatch{pattern, target})
 		}

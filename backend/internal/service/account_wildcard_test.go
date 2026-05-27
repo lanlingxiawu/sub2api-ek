@@ -4,6 +4,8 @@ package service
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestMatchWildcard(t *testing.T) {
@@ -524,4 +526,32 @@ func TestAccountGetModelMapping_CacheInvalidatesOnInPlaceValueChange(t *testing.
 	if second["claude-sonnet"] != "sonnet-b" {
 		t.Fatalf("expected cache invalidated after in-place value change, got: %v", second)
 	}
+}
+
+func TestAccountGetModelMapping_AcceptsStringMap(t *testing.T) {
+	account := &Account{
+		Credentials: map[string]any{
+			"model_mapping": map[string]string{
+				"gpt-5": "gpt-5.4",
+			},
+		},
+	}
+
+	require.Equal(t, "gpt-5.4", account.GetMappedModel("gpt-5"))
+}
+
+func TestAccountGetMappedModel_EmptyTargetSkipped(t *testing.T) {
+	account := &Account{
+		Credentials: map[string]any{
+			"model_mapping": map[string]any{
+				"gpt-5": "",
+				"gpt-*": "gpt-5.4",
+				"bad-*": "",
+				"other": "other-upstream",
+			},
+		},
+	}
+
+	require.Equal(t, "gpt-5.4", account.GetMappedModel("gpt-5"))
+	require.Equal(t, "bad-model", account.GetMappedModel("bad-model"))
 }

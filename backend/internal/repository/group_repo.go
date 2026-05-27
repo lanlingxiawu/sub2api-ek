@@ -85,6 +85,7 @@ func (r *groupRepository) Create(ctx context.Context, groupIn *service.Group) er
 		// xiugai 修改自动映射功能
 		if setErr := r.setGroupModelMapping(ctx, groupIn.ID, groupIn.ModelMapping); setErr != nil {
 			logger.LegacyPrintf("repository.group", "[ModelMapping] set failed on create: group=%d err=%v", groupIn.ID, setErr)
+			return fmt.Errorf("set group model mapping: %w", setErr)
 		}
 		// xiugai end
 		if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventGroupChanged, nil, &groupIn.ID, nil); err != nil {
@@ -305,6 +306,7 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 	// xiugai 修改自动映射功能
 	if setErr := r.setGroupModelMapping(ctx, groupIn.ID, groupIn.ModelMapping); setErr != nil {
 		logger.LegacyPrintf("repository.group", "[ModelMapping] set failed on update: group=%d err=%v", groupIn.ID, setErr)
+		return fmt.Errorf("set group model mapping: %w", setErr)
 	}
 	// xiugai end
 	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventGroupChanged, nil, &groupIn.ID, nil); err != nil {

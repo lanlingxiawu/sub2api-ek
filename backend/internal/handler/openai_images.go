@@ -68,6 +68,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
 	}
+	clientReqModel := parsed.Model
 
 	// xiugai 修改自动映射功能
 	// 应用分组级模型映射（优先于渠道级，透明重写请求模型名）
@@ -322,7 +323,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 				IPAddress:          clientIP,
 				RequestPayloadHash: requestPayloadHash,
 				APIKeyService:      h.apiKeyService,
-				ChannelUsageFields: channelMapping.ToUsageFields(parsed.Model, upstreamModel),
+				ChannelUsageFields: channelMapping.ToUsageFieldsFromClient(clientReqModel, parsed.Model, upstreamModel),
 			}); err != nil {
 				logger.L().With(
 					zap.String("component", "handler.openai_gateway.images"),

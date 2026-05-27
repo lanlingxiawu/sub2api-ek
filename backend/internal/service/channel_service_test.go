@@ -876,10 +876,7 @@ func TestResolveChannelMapping_WildcardFirstMatch(t *testing.T) {
 
 	result := svc.ResolveChannelMapping(context.Background(), 10, "claude-sonnet-4")
 	require.True(t, result.Mapped)
-	// map iteration order is non-deterministic, so the first-match depends on
-	// insertion order which Go maps don't guarantee; verify that one of the
-	// wildcard targets matched
-	require.Contains(t, []string{"target1", "target2"}, result.MappedModel)
+	require.Equal(t, "target1", result.MappedModel)
 }
 
 func TestResolveChannelMapping_NoMapping(t *testing.T) {
@@ -2246,6 +2243,20 @@ func TestToUsageFields_WithUpstreamDifference(t *testing.T) {
 	require.Equal(t, "my-alias→claude-sonnet-4→claude-sonnet-4-20250514", fields.ModelMappingChain)
 }
 
+func TestToUsageFieldsFromClient_IncludesGroupMappingStep(t *testing.T) {
+	r := ChannelMappingResult{
+		MappedModel:        "upstream-channel",
+		ChannelID:          4,
+		Mapped:             true,
+		BillingModelSource: BillingModelSourceChannelMapped,
+	}
+
+	fields := r.ToUsageFieldsFromClient("client-alias", "group-alias", "account-upstream")
+	require.Equal(t, "client-alias", fields.OriginalModel)
+	require.Equal(t, "upstream-channel", fields.ChannelMappedModel)
+	require.Equal(t, "client-alias\u2192group-alias\u2192upstream-channel\u2192account-upstream", fields.ModelMappingChain)
+}
+
 // ---------------------------------------------------------------------------
 // 11. validatePricingBillingMode (moved from handler tests)
 // ---------------------------------------------------------------------------
@@ -2376,6 +2387,22 @@ func TestCreate_MappingConflict(t *testing.T) {
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "MAPPING_PATTERN_CONFLICT")
+}
+
+func TestCreate_MappingRejectsInvalidTarget(t *testing.T) {
+	repo := &mockChannelRepository{}
+	svc := newTestChannelService(repo)
+
+	_, err := svc.Create(context.Background(), &CreateChannelInput{
+		Name: "test",
+		ModelMapping: map[string]map[string]string{
+			PlatformAnthropic: {
+				"claude-*": "target-*",
+			},
+		},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "INVALID_MAPPING")
 }
 
 func TestUpdate_MappingConflict(t *testing.T) {

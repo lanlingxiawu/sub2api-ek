@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -105,31 +106,59 @@ type ChannelMappingResult struct {
 // upstreamModel: 上游实际使用的模型名（ForwardResult.UpstreamModel）。
 // 返回空字符串表示无映射。
 func (r ChannelMappingResult) BuildModelMappingChain(reqModel, upstreamModel string) string {
-	if !r.Mapped {
-		if upstreamModel != "" && upstreamModel != reqModel {
-			return reqModel + "→" + upstreamModel
-		}
-		return ""
-	}
-	if upstreamModel != "" && upstreamModel != r.MappedModel {
-		return reqModel + "→" + r.MappedModel + "→" + upstreamModel
-	}
-	return reqModel + "→" + r.MappedModel
+	channelReqModel := reqModel
+	return r.buildModelMappingChainFromClient(reqModel, channelReqModel, upstreamModel)
 }
 
 // ToUsageFields 将渠道映射结果转为使用记录字段
 func (r ChannelMappingResult) ToUsageFields(reqModel, upstreamModel string) ChannelUsageFields {
-	channelMappedModel := reqModel
+	return r.ToUsageFieldsFromClient(reqModel, reqModel, upstreamModel)
+}
+
+func (r ChannelMappingResult) ToUsageFieldsFromClient(clientReqModel, channelReqModel, upstreamModel string) ChannelUsageFields {
+	channelMappedModel := channelReqModel
 	if r.Mapped {
 		channelMappedModel = r.MappedModel
 	}
 	return ChannelUsageFields{
 		ChannelID:          r.ChannelID,
-		OriginalModel:      reqModel,
+		OriginalModel:      clientReqModel,
 		ChannelMappedModel: channelMappedModel,
 		BillingModelSource: r.BillingModelSource,
-		ModelMappingChain:  r.BuildModelMappingChain(reqModel, upstreamModel),
+		ModelMappingChain:  r.buildModelMappingChainFromClient(clientReqModel, channelReqModel, upstreamModel),
 	}
+}
+
+func (r ChannelMappingResult) buildModelMappingChainFromClient(clientReqModel, channelReqModel, upstreamModel string) string {
+	models := []string{clientReqModel}
+	if channelReqModel != "" && channelReqModel != clientReqModel {
+		models = append(models, channelReqModel)
+	}
+	if r.Mapped {
+		models = append(models, r.MappedModel)
+	}
+	if upstreamModel != "" {
+		models = append(models, upstreamModel)
+	}
+	return compactModelMappingChain(models...)
+}
+
+func compactModelMappingChain(models ...string) string {
+	cleaned := make([]string, 0, len(models))
+	for _, model := range models {
+		model = strings.TrimSpace(model)
+		if model == "" {
+			continue
+		}
+		if len(cleaned) > 0 && cleaned[len(cleaned)-1] == model {
+			continue
+		}
+		cleaned = append(cleaned, model)
+	}
+	if len(cleaned) < 2 {
+		return ""
+	}
+	return strings.Join(cleaned, "\u2192")
 }
 
 const (
@@ -325,8 +354,21 @@ func populateChannelCache(channels []Channel, groupPlatforms map[int64]string) *
 			expandMappingToCache(cache, ch, gid, platform)
 		}
 	}
+	sortChannelWildcardMappings(cache)
 
 	return cache
+}
+
+func sortChannelWildcardMappings(cache *channelCache) {
+	for key := range cache.wildcardMappingByGP {
+		wildcards := cache.wildcardMappingByGP[key]
+		sort.SliceStable(wildcards, func(i, j int) bool {
+			if len(wildcards[i].prefix) != len(wildcards[j].prefix) {
+				return len(wildcards[i].prefix) > len(wildcards[j].prefix)
+			}
+			return wildcards[i].prefix < wildcards[j].prefix
+		})
+	}
 }
 
 // invalidateCache 使缓存失效，让下次读取时自然重建
@@ -678,6 +720,10 @@ func (s *ChannelService) Create(ctx context.Context, input *CreateChannelInput) 
 	if err := s.checkGroupConflicts(ctx, 0, input.GroupIDs); err != nil {
 		return nil, err
 	}
+	modelMapping, err := normalizeChannelModelMapping(input.ModelMapping)
+	if err != nil {
+		return nil, err
+	}
 
 	channel := &Channel{
 		Name:                       input.Name,
@@ -687,7 +733,7 @@ func (s *ChannelService) Create(ctx context.Context, input *CreateChannelInput) 
 		RestrictModels:             input.RestrictModels,
 		GroupIDs:                   input.GroupIDs,
 		ModelPricing:               input.ModelPricing,
-		ModelMapping:               input.ModelMapping,
+		ModelMapping:               modelMapping,
 		Features:                   input.Features,
 		FeaturesConfig:             input.FeaturesConfig,
 		ApplyPricingToAccountStats: input.ApplyPricingToAccountStats,
@@ -799,7 +845,11 @@ func (s *ChannelService) applyUpdateInput(ctx context.Context, channel *Channel,
 		channel.ModelPricing = *input.ModelPricing
 	}
 	if input.ModelMapping != nil {
-		channel.ModelMapping = input.ModelMapping
+		modelMapping, err := normalizeChannelModelMapping(input.ModelMapping)
+		if err != nil {
+			return err
+		}
+		channel.ModelMapping = modelMapping
 	}
 	if input.BillingModelSource != "" {
 		channel.BillingModelSource = input.BillingModelSource
@@ -933,6 +983,44 @@ func validateNoConflictingModels(pricingList []ChannelModelPricing) error {
 		}
 	}
 	return nil
+}
+
+func normalizeChannelModelMapping(mapping map[string]map[string]string) (map[string]map[string]string, error) {
+	if mapping == nil {
+		return nil, nil
+	}
+	normalized := make(map[string]map[string]string, len(mapping))
+	for platform, platformMapping := range mapping {
+		platform = strings.TrimSpace(platform)
+		if platform == "" {
+			return nil, infraerrors.BadRequest("INVALID_MAPPING", "mapping platform cannot be empty")
+		}
+		dstMapping := make(map[string]string, len(platformMapping))
+		for source, target := range platformMapping {
+			source = strings.TrimSpace(source)
+			target = strings.TrimSpace(target)
+			if source == "" {
+				return nil, infraerrors.BadRequest("INVALID_MAPPING", fmt.Sprintf("mapping source cannot be empty in platform '%s'", platform))
+			}
+			if target == "" {
+				return nil, infraerrors.BadRequest("INVALID_MAPPING", fmt.Sprintf("mapping target for '%s' cannot be empty in platform '%s'", source, platform))
+			}
+			if strings.Contains(target, "*") {
+				return nil, infraerrors.BadRequest("INVALID_MAPPING", fmt.Sprintf("mapping target for '%s' cannot contain wildcard in platform '%s'", source, platform))
+			}
+			if count := strings.Count(source, "*"); count > 0 {
+				if count > 1 || !strings.HasSuffix(source, "*") {
+					return nil, infraerrors.BadRequest("INVALID_MAPPING", fmt.Sprintf("mapping wildcard source '%s' must use a single trailing * in platform '%s'", source, platform))
+				}
+			}
+			if _, exists := dstMapping[source]; exists {
+				return nil, infraerrors.BadRequest("INVALID_MAPPING", fmt.Sprintf("duplicate mapping source '%s' in platform '%s'", source, platform))
+			}
+			dstMapping[source] = target
+		}
+		normalized[platform] = dstMapping
+	}
+	return normalized, nil
 }
 
 // validateNoConflictingMappings 检查模型映射中是否有冲突的源模式

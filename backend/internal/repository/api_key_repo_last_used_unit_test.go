@@ -30,7 +30,7 @@ func newAPIKeyRepoSQLite(t *testing.T) (*apiKeyRepository, *dbent.Client) {
 	client := enttest.NewClient(t, enttest.WithOptions(dbent.Driver(drv)))
 	t.Cleanup(func() { _ = client.Close() })
 
-	// xiugai ĞŞ¸´ sql ×Ö¶ÎÎª nil µ¼ÖÂ loadGroupModelMappingSQL ¿ÕÖ¸Õë panic
+	// xiugai ä¿®å¤ sql å­—æ®µä¸º nil å¯¼è‡´ loadGroupModelMappingSQL ç©ºæŒ‡é’ˆ panic
 	return &apiKeyRepository{client: client, sql: db}, client // end
 }
 

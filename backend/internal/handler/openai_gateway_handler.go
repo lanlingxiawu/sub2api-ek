@@ -189,6 +189,14 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 
+	// xiugai 修改自动映射功能
+	// 应用分组级模型映射（优先于渠道级，透明重写请求模型名）
+	if mapped, ok := apiKey.Group.ResolveGroupMappedModel(reqModel); ok {
+		body = service.ReplaceModelInBody(body, mapped)
+		reqModel = mapped
+	}
+	// xiugai end
+
 	setOpsRequestContext(c, reqModel, reqStream)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(reqStream, false)))
 
@@ -613,6 +621,15 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		return
 	}
 	reqModel := modelResult.String()
+
+	// xiugai 修改自动映射功能
+	// 应用分组级模型映射（优先于渠道级，透明重写请求模型名）
+	if mapped, ok := apiKey.Group.ResolveGroupMappedModel(reqModel); ok {
+		body = service.ReplaceModelInBody(body, mapped)
+		reqModel = mapped
+	}
+	// xiugai end
+
 	routingModel := service.NormalizeOpenAICompatRequestedModel(reqModel)
 	preferredMappedModel := resolveOpenAIMessagesDispatchMappedModel(apiKey, reqModel)
 	reqStream := gjson.GetBytes(body, "stream").Bool()
@@ -1178,6 +1195,15 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "model is required in first response.create payload")
 		return
 	}
+
+	// xiugai 修改自动映射功能
+	// 应用分组级模型映射（优先于渠道级，透明重写请求模型名）
+	if mapped, ok := apiKey.Group.ResolveGroupMappedModel(reqModel); ok {
+		firstMessage = service.ReplaceModelInBody(firstMessage, mapped)
+		reqModel = mapped
+	}
+	// xiugai end
+
 	previousResponseID := strings.TrimSpace(gjson.GetBytes(firstMessage, "previous_response_id").String())
 	previousResponseIDKind := service.ClassifyOpenAIPreviousResponseIDKind(previousResponseID)
 	if previousResponseID != "" && previousResponseIDKind == service.OpenAIPreviousResponseIDKindMessageID {

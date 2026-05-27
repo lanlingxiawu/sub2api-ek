@@ -160,6 +160,16 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	}
 	reqModel := parsedReq.Model
 	reqStream := parsedReq.Stream
+
+	// xiugai 修改自动映射功能
+	// 应用分组级模型映射（优先于渠道级，透明重写请求模型名）
+	if mapped, ok := apiKey.Group.ResolveGroupMappedModel(reqModel); ok {
+		body = service.ReplaceModelInBody(body, mapped)
+		parsedReq.Model = mapped
+		reqModel = mapped
+	}
+	// xiugai end
+
 	reqLog = reqLog.With(zap.String("model", reqModel), zap.Bool("stream", reqStream))
 
 	// 解析渠道级模型映射
@@ -744,6 +754,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			if channelMapping.Mapped {
 				parsedReq.Model = channelMapping.MappedModel
 				parsedReq.Body = h.gatewayService.ReplaceModelInBody(parsedReq.Body, channelMapping.MappedModel)
+				body = h.gatewayService.ReplaceModelInBody(body, channelMapping.MappedModel)
 			}
 			// Bedrock CC 兼容：渠道模型映射后，清理 Anthropic API 专有字段、注入 Bedrock 必需字段
 			parsedReq.Body = h.gatewayService.ApplyBedrockCCCompat(c.Request.Context(), parsedReq.Body, parsedReq.Model, account, apiKey.GroupID)

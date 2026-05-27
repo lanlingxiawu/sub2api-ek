@@ -1,6 +1,8 @@
 package service
 
 import (
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -65,6 +67,16 @@ type Group struct {
 	// RPMLimit 分组级每分钟请求数上限（0 = 不限制）。
 	// 一旦设置即接管该分组用户的限流（覆盖用户级 rpm_limit），可被 user-group rpm_override 进一步覆盖。
 	RPMLimit int
+
+	// xiugai 修改自动映射功能
+	// 分组级模型映射（分组维度，优先于渠道/账号级映射）。
+	// key: 匹配模式，value: 目标模型名。
+	// 匹配规则（优先级由高到低）：
+	//   1. 精确匹配
+	//   2. 正则匹配：pattern 以 "~" 开头，去掉前缀后作为 Go regexp 编译匹配
+	//   3. 通配符匹配：pattern 以 "*" 结尾，匹配对应前缀
+	ModelMapping map[string]string
+	// xiugai end
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -165,3 +177,55 @@ func matchModelPattern(pattern, model string) bool {
 
 	return false
 }
+
+// xiugai 修改自动映射功能
+// ResolveGroupMappedModel 查找分组级别的模型映射。
+// matched=true 表示命中规则（即使映射结果与原模型名相同）。
+// 匹配优先级：精确 > 正则（~ 前缀）> 通配符（* 后缀），同级按 pattern 长度降序取最长匹配。
+func (g *Group) ResolveGroupMappedModel(requestedModel string) (mappedModel string, matched bool) {
+	if g == nil || len(g.ModelMapping) == 0 || requestedModel == "" {
+		return requestedModel, false
+	}
+	// 1. 精确匹配
+	if target, ok := g.ModelMapping[requestedModel]; ok {
+		return target, true
+	}
+	// 2. 正则匹配（pattern 以 "~" 开头）
+	type candidate struct {
+		pattern string
+		target  string
+	}
+	var regexCandidates, wildcardCandidates []candidate
+	for pattern, target := range g.ModelMapping {
+		if strings.HasPrefix(pattern, "~") {
+			regexCandidates = append(regexCandidates, candidate{pattern, target})
+		} else if strings.HasSuffix(pattern, "*") {
+			wildcardCandidates = append(wildcardCandidates, candidate{pattern, target})
+		}
+	}
+	// 正则：按 pattern 长度降序，取第一个匹配
+	sort.Slice(regexCandidates, func(i, j int) bool {
+		return len(regexCandidates[i].pattern) > len(regexCandidates[j].pattern)
+	})
+	for _, c := range regexCandidates {
+		re, err := regexp.Compile(c.pattern[1:]) // 去掉 "~" 前缀
+		if err != nil {
+			continue
+		}
+		if re.MatchString(requestedModel) {
+			return c.target, true
+		}
+	}
+	// 3. 通配符：按 pattern 长度降序（最长前缀优先）
+	sort.Slice(wildcardCandidates, func(i, j int) bool {
+		return len(wildcardCandidates[i].pattern) > len(wildcardCandidates[j].pattern)
+	})
+	for _, c := range wildcardCandidates {
+		prefix := c.pattern[:len(c.pattern)-1]
+		if strings.HasPrefix(requestedModel, prefix) {
+			return c.target, true
+		}
+	}
+	return requestedModel, false
+}
+// xiugai end

@@ -30,7 +30,8 @@ func newAPIKeyRepoSQLite(t *testing.T) (*apiKeyRepository, *dbent.Client) {
 	client := enttest.NewClient(t, enttest.WithOptions(dbent.Driver(drv)))
 	t.Cleanup(func() { _ = client.Close() })
 
-	return &apiKeyRepository{client: client}, client
+	// xiugai ÐÞ¸´ sql ×Ö¶ÎÎª nil µ¼ÖÂ loadGroupModelMappingSQL ¿ÕÖ¸Õë panic
+	return &apiKeyRepository{client: client, sql: db}, client // end
 }
 
 func mustCreateAPIKeyRepoUser(t *testing.T, ctx context.Context, client *dbent.Client, email string) *service.User {

@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -81,12 +82,106 @@ func (r *groupRepository) Create(ctx context.Context, groupIn *service.Group) er
 		groupIn.ID = created.ID
 		groupIn.CreatedAt = created.CreatedAt
 		groupIn.UpdatedAt = created.UpdatedAt
+		// xiugai 修改自动映射功能
+		if setErr := r.setGroupModelMapping(ctx, groupIn.ID, groupIn.ModelMapping); setErr != nil {
+			logger.LegacyPrintf("repository.group", "[ModelMapping] set failed on create: group=%d err=%v", groupIn.ID, setErr)
+		}
+		// xiugai end
 		if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventGroupChanged, nil, &groupIn.ID, nil); err != nil {
 			logger.LegacyPrintf("repository.group", "[SchedulerOutbox] enqueue group create failed: group=%d err=%v", groupIn.ID, err)
 		}
 	}
 	return translatePersistenceError(err, nil, service.ErrGroupExists)
 }
+
+// setGroupModelMapping 用 raw SQL 写入 model_mapping 列（ENT 不感知此列）。
+func (r *groupRepository) setGroupModelMapping(ctx context.Context, id int64, mapping map[string]string) error {
+	return setGroupModelMappingSQL(ctx, r.sql, id, mapping)
+}
+
+// loadGroupModelMapping 用 raw SQL 读取单个分组的 model_mapping。
+func (r *groupRepository) loadGroupModelMapping(ctx context.Context, id int64) map[string]string {
+	return loadGroupModelMappingSQL(ctx, r.sql, id)
+}
+
+// loadGroupModelMappings 批量读取多个分组的 model_mapping，返回 map[groupID]mapping。
+func (r *groupRepository) loadGroupModelMappings(ctx context.Context, ids []int64) map[int64]map[string]string {
+	return loadGroupModelMappingsSQL(ctx, r.sql, ids)
+}
+
+// xiugai 修改自动映射功能
+// setGroupModelMappingSQL 是包级辅助函数，可被同包其他 repo 调用。
+func setGroupModelMappingSQL(ctx context.Context, db sqlExecutor, id int64, mapping map[string]string) error {
+	data := mapping
+	if data == nil {
+		data = map[string]string{}
+	}
+	b, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx, `UPDATE groups SET model_mapping = $1 WHERE id = $2`, string(b), id)
+	return err
+}
+
+// loadGroupModelMappingSQL 是包级辅助函数，可被同包其他 repo 调用。
+func loadGroupModelMappingSQL(ctx context.Context, db sqlExecutor, id int64) map[string]string {
+	rows, err := db.QueryContext(ctx, `SELECT model_mapping FROM groups WHERE id = $1 AND deleted_at IS NULL`, id)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil
+	}
+	var raw string
+	if err := rows.Scan(&raw); err != nil {
+		return nil
+	}
+	var m map[string]string
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return nil
+	}
+	return m
+}
+
+// loadGroupModelMappingsSQL 是包级辅助函数，批量读取多个分组的 model_mapping。
+func loadGroupModelMappingsSQL(ctx context.Context, db sqlExecutor, ids []int64) map[int64]map[string]string {
+	if len(ids) == 0 {
+		return nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = id
+	}
+	query := fmt.Sprintf(
+		`SELECT id, model_mapping FROM groups WHERE id IN (%s) AND deleted_at IS NULL`,
+		strings.Join(placeholders, ","),
+	)
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	result := make(map[int64]map[string]string, len(ids))
+	for rows.Next() {
+		var gid int64
+		var raw string
+		if err := rows.Scan(&gid, &raw); err != nil {
+			continue
+		}
+		var m map[string]string
+		if err := json.Unmarshal([]byte(raw), &m); err != nil {
+			continue
+		}
+		result[gid] = m
+	}
+	return result
+}
+
+// xiugai end
 
 func (r *groupRepository) GetByID(ctx context.Context, id int64) (*service.Group, error) {
 	out, err := r.GetByIDLite(ctx, id)
@@ -111,7 +206,11 @@ func (r *groupRepository) GetByIDLite(ctx context.Context, id int64) (*service.G
 	if err != nil {
 		return nil, translatePersistenceError(err, service.ErrGroupNotFound, nil)
 	}
-	return groupEntityToService(m), nil
+	out := groupEntityToService(m)
+	// xiugai 修改自动映射功能
+	out.ModelMapping = r.loadGroupModelMapping(ctx, id)
+	// xiugai end
+	return out, nil
 }
 
 func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) error {
@@ -203,6 +302,11 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		return translatePersistenceError(err, service.ErrGroupNotFound, service.ErrGroupExists)
 	}
 	groupIn.UpdatedAt = updated.UpdatedAt
+	// xiugai 修改自动映射功能
+	if setErr := r.setGroupModelMapping(ctx, groupIn.ID, groupIn.ModelMapping); setErr != nil {
+		logger.LegacyPrintf("repository.group", "[ModelMapping] set failed on update: group=%d err=%v", groupIn.ID, setErr)
+	}
+	// xiugai end
 	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventGroupChanged, nil, &groupIn.ID, nil); err != nil {
 		logger.LegacyPrintf("repository.group", "[SchedulerOutbox] enqueue group update failed: group=%d err=%v", groupIn.ID, err)
 	}
@@ -281,6 +385,12 @@ func (r *groupRepository) ListWithFilters(ctx context.Context, params pagination
 			outGroups[i].RateLimitedAccountCount = c.RateLimited
 		}
 	}
+	// xiugai 修改自动映射功能
+	mappings := r.loadGroupModelMappings(ctx, groupIDs)
+	for i := range outGroups {
+		outGroups[i].ModelMapping = mappings[outGroups[i].ID]
+	}
+	// xiugai end
 
 	return outGroups, paginationResultFromTotal(int64(total), params), nil
 }
@@ -358,16 +468,20 @@ func (r *groupRepository) listWithAccountCountSort(ctx context.Context, q *dbent
 	}
 
 	outGroups := make([]service.Group, len(page))
+	// xiugai 修改自动映射功能
+	mappings := r.loadGroupModelMappings(ctx, pageIDs)
 	for i := range groups {
 		g := groupEntityToService(groups[i])
 		c := counts[g.ID]
 		g.AccountCount = c.Total
 		g.ActiveAccountCount = c.Active
 		g.RateLimitedAccountCount = c.RateLimited
+		g.ModelMapping = mappings[g.ID]
 		if idx, ok := pageIdx[g.ID]; ok {
 			outGroups[idx] = *g
 		}
 	}
+	// xiugai end
 
 	return outGroups, paginationResultFromTotal(int64(total), params), nil
 }
@@ -452,6 +566,12 @@ func (r *groupRepository) ListActive(ctx context.Context) ([]service.Group, erro
 			outGroups[i].RateLimitedAccountCount = c.RateLimited
 		}
 	}
+	// xiugai 修改自动映射功能
+	mappings := r.loadGroupModelMappings(ctx, groupIDs)
+	for i := range outGroups {
+		outGroups[i].ModelMapping = mappings[outGroups[i].ID]
+	}
+	// xiugai end
 
 	return outGroups, nil
 }
@@ -482,6 +602,12 @@ func (r *groupRepository) ListActiveByPlatform(ctx context.Context, platform str
 			outGroups[i].RateLimitedAccountCount = c.RateLimited
 		}
 	}
+	// xiugai 修改自动映射功能
+	mappings := r.loadGroupModelMappings(ctx, groupIDs)
+	for i := range outGroups {
+		outGroups[i].ModelMapping = mappings[outGroups[i].ID]
+	}
+	// xiugai end
 
 	return outGroups, nil
 }

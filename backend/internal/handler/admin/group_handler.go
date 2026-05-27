@@ -115,6 +115,10 @@ type CreateGroupRequest struct {
 	MessagesDispatchModelConfig service.OpenAIMessagesDispatchModelConfig `json:"messages_dispatch_model_config"`
 	// 分组 RPM 上限（0 = 不限制）
 	RPMLimit int `json:"rpm_limit"`
+	// xiugai 修改自动映射功能
+	// 分组级模型映射（支持通配符 * 和正则 ~ 前缀），如 {"gpt-4*": "gpt-4o", "~^claude-.*": "claude-3-5-sonnet-20241022"}
+	ModelMapping map[string]string `json:"model_mapping"`
+	// xiugai end
 	// 从指定分组复制账号（创建后自动绑定）
 	CopyAccountsFromGroupIDs []int64 `json:"copy_accounts_from_group_ids"`
 }
@@ -155,6 +159,10 @@ type UpdateGroupRequest struct {
 	MessagesDispatchModelConfig *service.OpenAIMessagesDispatchModelConfig `json:"messages_dispatch_model_config"`
 	// 分组 RPM 上限（0 = 不限制）；nil 表示未提供不改动
 	RPMLimit *int `json:"rpm_limit"`
+	// xiugai 修改自动映射功能
+	// 分组级模型映射（支持通配符 * 和正则 ~ 前缀），nil 表示不改动，空对象 {} 表示清除
+	ModelMapping map[string]string `json:"model_mapping"`
+	// xiugai end
 	// 从指定分组复制账号（同步操作：先清空当前分组的账号绑定，再绑定源分组的账号）
 	CopyAccountsFromGroupIDs []int64 `json:"copy_accounts_from_group_ids"`
 }
@@ -276,6 +284,9 @@ func (h *GroupHandler) Create(c *gin.Context) {
 		DefaultMappedModel:              req.DefaultMappedModel,
 		MessagesDispatchModelConfig:     req.MessagesDispatchModelConfig,
 		RPMLimit:                        req.RPMLimit,
+		// xiugai 修改自动映射功能
+		ModelMapping:                    req.ModelMapping,
+		// xiugai end
 		CopyAccountsFromGroupIDs:        req.CopyAccountsFromGroupIDs,
 	})
 	if err != nil {
@@ -331,6 +342,9 @@ func (h *GroupHandler) Update(c *gin.Context) {
 		DefaultMappedModel:              req.DefaultMappedModel,
 		MessagesDispatchModelConfig:     req.MessagesDispatchModelConfig,
 		RPMLimit:                        req.RPMLimit,
+		// xiugai 修改自动映射功能
+		ModelMapping:                    req.ModelMapping,
+		// xiugai end
 		CopyAccountsFromGroupIDs:        req.CopyAccountsFromGroupIDs,
 	})
 	if err != nil {

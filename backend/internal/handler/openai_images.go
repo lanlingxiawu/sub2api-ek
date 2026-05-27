@@ -62,17 +62,19 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 		return
 	}
 
-	if isMultipartImagesContentType(c.GetHeader("Content-Type")) {
-		setOpsRequestContext(c, "", false)
-	} else {
-		setOpsRequestContext(c, "", false)
-	}
-
+	setOpsRequestContext(c, "", false)
 	parsed, err := h.gatewayService.ParseOpenAIImagesRequest(c, body)
 	if err != nil {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
 	}
+
+	// xiugai 修改自动映射功能
+	// 应用分组级模型映射（优先于渠道级，透明重写请求模型名）
+	if mapped, ok := apiKey.Group.ResolveGroupMappedModel(parsed.Model); ok {
+		parsed.Model = mapped
+	}
+	// xiugai end
 
 	reqLog = reqLog.With(
 		zap.String("model", parsed.Model),
@@ -97,11 +99,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 		defer imageReleaseFunc()
 	}
 
-	if parsed.Multipart {
-		setOpsRequestContext(c, parsed.Model, parsed.Stream)
-	} else {
-		setOpsRequestContext(c, parsed.Model, parsed.Stream)
-	}
+	setOpsRequestContext(c, parsed.Model, parsed.Stream)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(parsed.Stream, false)))
 
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, parsed.Model)

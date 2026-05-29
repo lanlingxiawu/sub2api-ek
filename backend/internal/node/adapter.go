@@ -54,9 +54,14 @@ func (l *accountRepoLister) ListAll(ctx context.Context) ([]NodeAccount, error) 
 
 		for _, a := range rows {
 			all = append(all, NodeAccount{
-				ID:     a.ID,
-				Name:   a.Name,
-				Status: a.Status,
+				ID:                     a.ID,
+				Name:                   a.Name,
+				Status:                 a.Status,
+				Schedulable:            a.Schedulable,
+				RateLimitResetAt:       a.RateLimitResetAt,
+				OverloadUntil:          a.OverloadUntil,
+				TempUnschedulableUntil: a.TempUnschedulableUntil,
+				QuotaExceeded:          a.IsQuotaExceeded(),
 			})
 		}
 

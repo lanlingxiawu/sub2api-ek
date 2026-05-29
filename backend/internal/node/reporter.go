@@ -53,14 +53,52 @@ type accountsStatusRequest struct {
 	Accounts []accountStatus `json:"accounts"`
 }
 
-// NodeAccount 是上报服务所需的最小账号信息结构，由 AccountLister 返回。
+// NodeAccount 是上报服务所需的账号信息结构，由 AccountLister 返回。
 type NodeAccount struct {
 	// ID 账号数据库主键。
 	ID int64
 	// Name 账号显示名称。
 	Name string
-	// Status 账号当前状态字符串。
+	// Status 账号原始数据库状态（active/error/disabled）。
 	Status string
+	// Schedulable 账号是否被管理员标记为可调度。
+	Schedulable bool
+	// RateLimitResetAt 速率限制（429）解除时间，nil 表示未限流。
+	RateLimitResetAt *time.Time
+	// OverloadUntil 过载（529）解除时间，nil 表示未过载。
+	OverloadUntil *time.Time
+	// TempUnschedulableUntil 临时不可调度解除时间，nil 表示正常。
+	TempUnschedulableUntil *time.Time
+	// QuotaExceeded 是否已超出配额限制。
+	QuotaExceeded bool
+}
+
+// effectiveStatus 综合多个字段计算账号的有效展示状态，与前端 AccountStatusIndicator 逻辑一致。
+// 优先级（从高到低）：rate_limited > overloaded > error > temp_unschedulable > disabled > quota_exceeded > paused > active
+func effectiveStatus(a NodeAccount) string {
+	now := time.Now()
+	if a.RateLimitResetAt != nil && now.Before(*a.RateLimitResetAt) {
+		return "速率限制"
+	}
+	if a.OverloadUntil != nil && now.Before(*a.OverloadUntil) {
+		return "过载"
+	}
+	if a.Status == "error" {
+		return "错误"
+	}
+	if a.TempUnschedulableUntil != nil && now.Before(*a.TempUnschedulableUntil) {
+		return "临时不可调度"
+	}
+	if a.Status != "active" {
+		return a.Status
+	}
+	if a.QuotaExceeded {
+		return "配额超限"
+	}
+	if !a.Schedulable {
+		return "关闭调度"
+	}
+	return "正常"
 }
 
 // AccountLister 定义获取本地全量账号的接口，由 accountRepoLister 适配器实现。
@@ -207,13 +245,13 @@ func (r *Reporter) maybeUploadAccounts(ctx context.Context) {
 		return
 	}
 
-	// 将 NodeAccount 转换为 accountStatus 上报结构。
+	// 将 NodeAccount 转换为 accountStatus 上报结构，使用综合状态。
 	statuses := make([]accountStatus, 0, len(accounts))
 	for _, a := range accounts {
 		statuses = append(statuses, accountStatus{
 			ID:     strconv.FormatInt(a.ID, 10),
 			Name:   a.Name,
-			Status: a.Status,
+			Status: effectiveStatus(a),
 		})
 	}
 

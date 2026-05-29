@@ -131,7 +131,6 @@ type AdminGroup struct {
 	// 模型路由配置（仅 anthropic 平台使用）
 	ModelRouting        map[string][]int64 `json:"model_routing"`
 	ModelRoutingEnabled bool               `json:"model_routing_enabled"`
-	ModelMapping        map[string]string  `json:"model_mapping"`
 
 	// MCP XML 协议注入（仅 antigravity 平台使用）
 	MCPXMLInject bool `json:"mcp_xml_inject"`

@@ -75,16 +75,6 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 	reqModel := modelResult.String()
-	clientReqModel := reqModel
-
-	// xiugai 修改自动映射功能
-	// 应用分组级模型映射（优先于渠道级，透明重写请求模型名）
-	if mapped, ok := apiKey.Group.ResolveGroupMappedModel(reqModel); ok {
-		body = service.ReplaceModelInBody(body, mapped)
-		reqModel = mapped
-	}
-	// xiugai end
-
 	reqStream := gjson.GetBytes(body, "stream").Bool()
 	reqLog = reqLog.With(zap.String("model", reqModel), zap.Bool("stream", reqStream))
 
@@ -291,7 +281,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 				IPAddress:          clientIP,
 				RequestPayloadHash: requestPayloadHash,
 				APIKeyService:      h.apiKeyService,
-				ChannelUsageFields: channelMapping.ToUsageFieldsFromClient(clientReqModel, reqModel, result.UpstreamModel),
+				ChannelUsageFields: channelMapping.ToUsageFields(reqModel, result.UpstreamModel),
 			}); err != nil {
 				reqLog.Error("gateway.responses.record_usage_failed",
 					zap.Int64("account_id", account.ID),

@@ -144,7 +144,6 @@ func GroupFromServiceAdmin(g *service.Group) *AdminGroup {
 		Group:                       groupFromServiceBase(g),
 		ModelRouting:                g.ModelRouting,
 		ModelRoutingEnabled:         g.ModelRoutingEnabled,
-		ModelMapping:                g.ModelMapping,
 		MCPXMLInject:                g.MCPXMLInject,
 		DefaultMappedModel:          g.DefaultMappedModel,
 		MessagesDispatchModelConfig: g.MessagesDispatchModelConfig,

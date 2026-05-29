@@ -30,8 +30,7 @@ func newAPIKeyRepoSQLite(t *testing.T) (*apiKeyRepository, *dbent.Client) {
 	client := enttest.NewClient(t, enttest.WithOptions(dbent.Driver(drv)))
 	t.Cleanup(func() { _ = client.Close() })
 
-	// xiugai 修复 sql 字段为 nil 导致 loadGroupModelMappingSQL 空指针 panic
-	return &apiKeyRepository{client: client, sql: db}, client // end
+	return &apiKeyRepository{client: client}, client
 }
 
 func mustCreateAPIKeyRepoUser(t *testing.T, ctx context.Context, client *dbent.Client, email string) *service.User {

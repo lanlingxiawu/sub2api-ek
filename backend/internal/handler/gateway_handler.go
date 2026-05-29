@@ -160,19 +160,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		return
 	}
 	reqModel := parsedReq.Model
-	clientReqModel := reqModel
 	reqStream := parsedReq.Stream
-
-	// xiugai 修改自动映射功能
-	// 应用分组级模型映射（优先于渠道级，透明重写请求模型名）
-	if mapped, ok := apiKey.Group.ResolveGroupMappedModel(reqModel); ok {
-		body = service.ReplaceModelInBody(body, mapped)
-		parsedReq.Body = body // 更新解析后的请求体，确保后续处理使用映射后的模型名
-		parsedReq.Model = mapped
-		reqModel = mapped
-	}
-	// xiugai end
-
 	reqLog = reqLog.With(zap.String("model", reqModel), zap.Bool("stream", reqStream))
 
 	// 解析渠道级模型映射
@@ -538,7 +526,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					RequestPayloadHash: requestPayloadHash,
 					ForceCacheBilling:  fs.ForceCacheBilling,
 					APIKeyService:      h.apiKeyService,
-					ChannelUsageFields: channelMapping.ToUsageFieldsFromClient(clientReqModel, reqModel, result.UpstreamModel),
+					ChannelUsageFields: channelMapping.ToUsageFields(reqModel, result.UpstreamModel),
 				}); err != nil {
 					logger.L().With(
 						zap.String("component", "handler.gateway.messages"),
@@ -759,7 +747,6 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			if channelMapping.Mapped {
 				parsedReq.Model = channelMapping.MappedModel
 				parsedReq.Body = h.gatewayService.ReplaceModelInBody(parsedReq.Body, channelMapping.MappedModel)
-				body = h.gatewayService.ReplaceModelInBody(body, channelMapping.MappedModel)
 			}
 			// Bedrock CC 兼容：渠道模型映射后，清理 Anthropic API 专有字段、注入 Bedrock 必需字段
 			parsedReq.Body = h.gatewayService.ApplyBedrockCCCompat(c.Request.Context(), parsedReq.Body, parsedReq.Model, account, apiKey.GroupID)
@@ -934,7 +921,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					RequestPayloadHash: requestPayloadHash,
 					ForceCacheBilling:  fs.ForceCacheBilling,
 					APIKeyService:      h.apiKeyService,
-					ChannelUsageFields: channelMapping.ToUsageFieldsFromClient(clientReqModel, reqModel, result.UpstreamModel),
+					ChannelUsageFields: channelMapping.ToUsageFields(reqModel, result.UpstreamModel),
 				}); err != nil {
 					logger.L().With(
 						zap.String("component", "handler.gateway.messages"),

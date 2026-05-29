@@ -213,12 +213,9 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		return nil, fmt.Errorf("build upstream request: %w", err)
 	}
 
-	// xiugai 修复 session 隔离缺失：用 isolateOpenAISessionID 将 apiKeyID 混入 session_id，
-	// 防止不同 API Key 使用相同 promptCacheKey 时共享上游 session
 	if promptCacheKey != "" {
-		upstreamReq.Header.Set("session_id", generateSessionUUID(isolateOpenAISessionID(getAPIKeyIDFromContext(c), promptCacheKey)))
+		upstreamReq.Header.Set("session_id", generateSessionUUID(promptCacheKey))
 	}
-	// end
 
 	// 7. Send request
 	proxyURL := ""
